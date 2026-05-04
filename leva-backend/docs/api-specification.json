@@ -1,0 +1,521 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Leva API",
+    "version": "1.0.0",
+    "description": "API for authentication and onboarding system"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000/api"
+    }
+  ],
+  "paths": {
+    "/register": {
+      "post": {
+        "operationId": "registerUser",
+        "summary": "Register new user",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error - Missing fields, invalid data, password confirmation mismatch, or email already registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                },
+                "example": {
+                  "message": "The given data was invalid.",
+                  "errors": {
+                    "email": ["The email has already been taken."],
+                    "password": ["The password field confirmation does not match."]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/login": {
+      "post": {
+        "operationId": "loginUser",
+        "summary": "Login user",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials - Email or password is incorrect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidCredentialsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error - Missing or invalid fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                },
+                "example": {
+                  "message": "The given data was invalid.",
+                  "errors": {
+                    "email": ["The email field is required."],
+                    "password": ["The password field is required."]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/onboarding": {
+      "post": {
+        "operationId": "completeOnboarding",
+        "summary": "Complete user onboarding",
+        "tags": ["Onboarding"],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Onboarding completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                },
+                "example": {
+                  "message": "The given data was invalid.",
+                  "errors": {
+                    "major": ["The major field is required."],
+                    "semester": ["The semester must be between 1 and 14."],
+                    "language_preference": ["The language preference field is required."],
+                    "learning_style": ["The learning style field is required."]
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict - User already completed onboarding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "getCurrentUser",
+        "summary": "Get current user profile",
+        "tags": ["Auth"],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current user data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["name", "email", "password", "password_confirmation"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "example": "John Doe"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 255,
+            "example": "john@example.com"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "description": "Minimum 8 characters",
+            "example": "Password123!"
+          },
+          "password_confirmation": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "description": "Must match password field",
+            "example": "Password123!"
+          }
+        }
+      },
+      "RegisterResponse": {
+        "type": "object",
+        "required": ["message", "data"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "User registered successfully"
+          },
+          "data": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        }
+      },
+      "UserSummary": {
+        "type": "object",
+        "required": ["id", "name", "email", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "name": {
+            "type": "string",
+            "example": "John Doe"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "john@example.com"
+          },
+          "status": {
+            "type": "string",
+            "description": "PENDING means the user must complete onboarding before accessing the main app.",
+            "example": "PENDING",
+            "enum": ["PENDING", "ACTIVE"]
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "john@example.com"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "example": "Password123!"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "required": ["message", "data"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "Login successful"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LoginData"
+          }
+        }
+      },
+      "LoginData": {
+        "type": "object",
+        "required": ["user", "token"],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "token": {
+            "type": "string",
+            "description": "Bearer token used for authenticated API requests.",
+            "example": "1|abc123token"
+          }
+        }
+      },
+      "OnboardingRequest": {
+        "type": "object",
+        "required": [
+          "major",
+          "semester",
+          "language_preference",
+          "learning_style"
+        ],
+        "properties": {
+          "major": {
+            "type": "string",
+            "maxLength": 255,
+            "example": "Informatika"
+          },
+          "semester": {
+            "type": "integer",
+            "example": 3,
+            "minimum": 1,
+            "maximum": 14
+          },
+          "language_preference": {
+            "type": "string",
+            "maxLength": 20,
+            "example": "id"
+          },
+          "learning_style": {
+            "type": "string",
+            "maxLength": 50,
+            "example": "visual"
+          }
+        }
+      },
+      "OnboardingResponse": {
+        "type": "object",
+        "required": ["message", "data"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "Onboarding completed successfully"
+          },
+          "data": {
+            "$ref": "#/components/schemas/UserDetailData"
+          }
+        }
+      },
+      "ValidationErrorResponse": {
+        "type": "object",
+        "required": ["message", "errors"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "The given data was invalid."
+          },
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "example": {
+              "field": ["The field is invalid."]
+            }
+          }
+        }
+      },
+      "UserProfile": {
+        "type": "object",
+        "required": ["major", "semester", "language_preference", "learning_style"],
+        "properties": {
+          "major": {
+            "type": "string",
+            "example": "Informatika"
+          },
+          "semester": {
+            "type": "integer",
+            "example": 3
+          },
+          "language_preference": {
+            "type": "string",
+            "example": "id"
+          },
+          "learning_style": {
+            "type": "string",
+            "example": "visual"
+          }
+        }
+      },
+      "MeResponse": {
+        "type": "object",
+        "required": ["message", "data"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "Current user retrieved successfully"
+          },
+          "data": {
+            "$ref": "#/components/schemas/UserDetailData"
+          }
+        }
+      },
+      "UserDetailData": {
+        "type": "object",
+        "required": ["user"],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserDetail"
+          }
+        }
+      },
+      "UserDetail": {
+        "type": "object",
+        "required": ["id", "name", "email", "status", "profile"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "name": {
+            "type": "string",
+            "example": "John Doe"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "john@example.com"
+          },
+          "status": {
+            "type": "string",
+            "example": "ACTIVE",
+            "enum": ["PENDING", "ACTIVE"]
+          },
+          "profile": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserProfile"
+              }
+            ]
+          }
+        }
+      },
+      "InvalidCredentialsResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "Invalid credentials"
+          }
+        }
+      },
+      "UnauthenticatedResponse": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "Unauthenticated."
+          }
+        }
+      },
+      "ConflictResponse": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "User already completed onboarding."
+          }
+        }
+      }
+    }
+  }
+}
