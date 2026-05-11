@@ -6,9 +6,9 @@ use App\Jobs\TaggingJob;
 use App\Models\SavedLibrary;
 use App\Models\User;
 use App\Models\UserProfile;
+use App\Services\OpenAIService;
 use Database\Seeders\ScrapedToolsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -23,29 +23,8 @@ class TaggingJobTest extends TestCase
         $this->seed(ScrapedToolsSeeder::class);
     }
 
-    public function test_tagging_job_marks_bookmark_completed_when_gemini_succeeds(): void
+    public function test_tagging_job_marks_bookmark_completed_when_openai_succeeds(): void
     {
-        Http::fake([
-            '*' => Http::response([
-                'candidates' => [[
-                    'content' => [
-                        'parts' => [[
-                            'text' => json_encode([
-                                'utility_priority' => 'must_try',
-                                'semantic_keywords' => [
-                                    'literature review',
-                                    'sumber terverifikasi',
-                                    'riset cepat',
-                                    'academic search',
-                                    'ai search',
-                                ],
-                            ]),
-                        ]],
-                    ],
-                ]],
-            ], 200),
-        ]);
-
         $user = User::factory()->create([
             'status' => User::STATUS_ACTIVE,
         ]);
@@ -66,9 +45,24 @@ class TaggingJobTest extends TestCase
             'tagging_status' => 'pending',
         ]);
 
-        config()->set('services.gemini.api_key', 'test-key');
+        $openAIService = new class extends OpenAIService
+        {
+            public function classifyBookmark(\App\Models\ScrapedTool $tool, array $userProfile): array
+            {
+                return [
+                    'utility_priority' => 'must_try',
+                    'semantic_keywords' => [
+                        'literature review',
+                        'sumber terverifikasi',
+                        'riset cepat',
+                        'academic search',
+                        'ai search',
+                    ],
+                ];
+            }
+        };
 
-        (new TaggingJob($bookmark->id))->handle(app(\App\Services\GeminiService::class));
+        (new TaggingJob($bookmark->id))->handle($openAIService);
 
         $bookmark->refresh();
 
@@ -77,17 +71,8 @@ class TaggingJobTest extends TestCase
         $this->assertCount(5, $bookmark->semantic_keywords);
     }
 
-    public function test_tagging_job_marks_bookmark_failed_when_gemini_errors(): void
+    public function test_tagging_job_marks_bookmark_failed_when_openai_errors(): void
     {
-        Http::fake([
-            '*' => Http::response([
-                'error' => [
-                    'code' => 429,
-                    'message' => 'Quota exceeded',
-                ],
-            ], 429),
-        ]);
-
         $user = User::factory()->create();
 
         $bookmark = SavedLibrary::query()->create([
@@ -97,9 +82,15 @@ class TaggingJobTest extends TestCase
             'tagging_status' => 'pending',
         ]);
 
-        config()->set('services.gemini.api_key', 'test-key');
+        $openAIService = new class extends OpenAIService
+        {
+            public function classifyBookmark(\App\Models\ScrapedTool $tool, array $userProfile): array
+            {
+                throw new \RuntimeException('Quota exceeded');
+            }
+        };
 
-        (new TaggingJob($bookmark->id))->handle(app(\App\Services\GeminiService::class));
+        (new TaggingJob($bookmark->id))->handle($openAIService);
 
         $bookmark->refresh();
 

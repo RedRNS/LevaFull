@@ -3,16 +3,14 @@
 namespace App\Services;
 
 use Exception;
-use Smalot\PdfParser\Parser;
+use Spatie\PdfToText\Pdf;
 
 class PdfTextExtractor
 {
     public function extract(string $path): string
     {
         try {
-            $parser = new Parser();
-            $pdf = $parser->parseFile($path);
-            return trim($pdf->getText());
+            return trim(Pdf::getText($path, env('PDF_TO_TEXT_BINARY_PATH')));
         } catch (Exception $e) {
             throw new \RuntimeException('Failed to extract PDF text: ' . $e->getMessage());
         }

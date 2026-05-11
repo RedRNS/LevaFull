@@ -3,12 +3,20 @@
 namespace App\Http\Controllers;
 
 use App\Models\ScrapedTool;
+use App\Services\OpenAIService;
+use App\Services\QdrantService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class ToolController extends Controller
 {
+    public function __construct(
+        private readonly QdrantService $qdrantService,
+        private readonly OpenAIService $openAIService
+    ) {
+    }
+
     private const CATEGORIES = [
         'Research',
         'Writing',
@@ -85,32 +93,63 @@ class ToolController extends Controller
 
         $query = trim($validated['q']);
         $limit = $validated['limit'] ?? 5;
+        $major = $request->user()?->profile?->major;
 
-        $results = ScrapedTool::query()
-            ->where(function ($builder) use ($query) {
-                $builder
-                    ->where('name', 'like', "%{$query}%")
-                    ->orWhere('description', 'like', "%{$query}%");
-            })
-            ->orderByRaw(
-                "CASE
-                    WHEN name LIKE ? THEN 0
-                    WHEN description LIKE ? THEN 1
-                    ELSE 2
-                END",
-                ["%{$query}%", "%{$query}%"]
-            )
-            ->orderByDesc('rating')
-            ->limit($limit)
-            ->get()
-            ->map(function (ScrapedTool $tool) {
-                return [
-                    ...$this->formatSummary($tool),
-                    'score' => 1.0,
-                    'why_recommended' => 'Direkomendasikan berdasarkan pencarian kata kunci',
-                ];
-            })
-            ->values();
+        $semanticMatches = collect($this->qdrantService->searchTools($query, null, $limit, 0.85));
+
+        if ($semanticMatches->isEmpty()) {
+            $semanticMatches = collect($this->qdrantService->searchTools($query, null, $limit, 0.7));
+        }
+
+        if ($semanticMatches->isNotEmpty()) {
+            $toolIds = $semanticMatches->pluck('tool_mysql_id')->all();
+            $tools = ScrapedTool::query()->whereIn('id', $toolIds)->get()->keyBy('id');
+
+            $results = $semanticMatches
+                ->map(function (array $match) use ($tools, $major) {
+                    $tool = $tools->get($match['tool_mysql_id']);
+
+                    if (!$tool) {
+                        return null;
+                    }
+
+                    return [
+                        ...$this->formatSummary($tool),
+                        'score' => $match['score'],
+                        'why_recommended' => $this->openAIService->generateSearchRecommendationReason($tool, [
+                            'major' => $major,
+                        ]),
+                    ];
+                })
+                ->filter()
+                ->values();
+        } else {
+            $results = ScrapedTool::query()
+                ->where(function ($builder) use ($query) {
+                    $builder
+                        ->where('name', 'like', "%{$query}%")
+                        ->orWhere('description', 'like', "%{$query}%");
+                })
+                ->orderByRaw(
+                    "CASE
+                        WHEN name LIKE ? THEN 0
+                        WHEN description LIKE ? THEN 1
+                        ELSE 2
+                    END",
+                    ["%{$query}%", "%{$query}%"]
+                )
+                ->orderByDesc('rating')
+                ->limit($limit)
+                ->get()
+                ->map(function (ScrapedTool $tool) {
+                    return [
+                        ...$this->formatSummary($tool),
+                        'score' => 1.0,
+                        'why_recommended' => 'Direkomendasikan berdasarkan pencarian kata kunci',
+                    ];
+                })
+                ->values();
+        }
 
         return response()->json([
             'message' => 'Search completed successfully',

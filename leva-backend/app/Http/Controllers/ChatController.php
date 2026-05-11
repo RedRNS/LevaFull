@@ -2,55 +2,56 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
-use App\Services\QdrantService;
-use App\Services\GeminiService;
 use App\Models\ScrapedTool;
+use App\Services\OpenAIService;
+use App\Services\QdrantService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class ChatController extends Controller
 {
-    private QdrantService $qdrantService;
-    private GeminiService $geminiService;
-
-    public function __construct(QdrantService $qdrantService, GeminiService $geminiService)
-    {
-        $this->qdrantService = $qdrantService;
-        $this->geminiService = $geminiService;
+    public function __construct(
+        private readonly QdrantService $qdrantService,
+        private readonly OpenAIService $openAIService
+    ) {
     }
 
-    public function send(Request $request)
+    public function send(Request $request): JsonResponse
     {
         $request->validate([
-            'message' => 'required|string',
-            'context_task_id' => 'nullable|uuid'
+            'message' => ['required', 'string'],
+            'context_task_id' => ['nullable', 'uuid'],
         ]);
 
         $user = $request->user();
-        $major = $user->profile->major ?? null;
+        $profile = $user->profile;
+        $categoryContext = $profile?->major ?? null;
+        $language = $profile?->language_preference ?? 'id';
 
-        $qdrantResults = $this->qdrantService->searchTools($request->message, $major, 5, 0.85);
+        $qdrantResults = $this->qdrantService->searchTools($request->message, $categoryContext, 5, 0.85);
 
         if (empty($qdrantResults)) {
-            $qdrantResults = $this->qdrantService->searchTools($request->message, $major, 5, 0.7);
+            $qdrantResults = $this->qdrantService->searchTools($request->message, $categoryContext, 5, 0.7);
         }
 
         $toolIds = collect($qdrantResults)->pluck('tool_mysql_id')->filter()->toArray();
-        $tools = ScrapedTool::whereIn('id', $toolIds)->get();
+        $tools = ScrapedTool::query()->whereIn('id', $toolIds)->get();
 
         if ($tools->isEmpty()) {
             $reply = "Maaf, saya tidak menemukan alat yang cukup relevan dengan spesifikasi pertanyaan Anda. Mohon reformulasi pertanyaan Anda atau gunakan kata kunci yang berbeda.";
         } else {
-            $aiResponse = $this->geminiService->generateChatReply($request->message, $tools->all());
+            $aiResponse = $this->openAIService->generateChatReply($request->message, $tools->all(), $language);
             $reply = $aiResponse['reply'];
         }
 
-        $conversationId = $request->input('context_task_id') ?? \Illuminate\Support\Str::uuid()->toString();
+        $conversationId = $request->input('context_task_id') ?? Str::uuid()->toString();
 
         $conversation = ChatConversation::firstOrCreate(
             ['id' => $conversationId, 'user_id' => $user->id],
-            ['title' => \Illuminate\Support\Str::limit($request->message, 50)]
+            ['title' => Str::limit($request->message, 50)]
         );
 
         ChatMessage::create([
@@ -63,26 +64,36 @@ class ChatController extends Controller
             'conversation_id' => $conversation->id,
             'role' => 'assistant',
             'content' => $reply,
-            'recommended_tool_ids' => $toolIds
+            'recommended_tool_ids' => $toolIds,
         ]);
 
-        $recommendedToolsResponse = [];
-        foreach ($tools as $tool) {
+        $recommendedToolsResponse = $tools->map(function (ScrapedTool $tool) use ($qdrantResults) {
             $matchedScore = collect($qdrantResults)->firstWhere('tool_mysql_id', $tool->id)['score'] ?? 0;
-            $recommendedToolsResponse[] = array_merge($tool->toArray(), ['score' => $matchedScore]);
-        }
+
+            return [
+                'id' => $tool->id,
+                'name' => $tool->name,
+                'url' => $tool->url,
+                'description' => $tool->description,
+                'category' => $tool->category,
+                'pricing_type' => $tool->pricing_type,
+                'rating' => $tool->rating,
+                'qdrant_uuid' => $tool->qdrant_uuid,
+                'score' => $matchedScore,
+            ];
+        })->values();
 
         return response()->json([
             'message' => 'Chat response generated',
             'data' => [
                 'reply' => $reply,
                 'recommended_tools' => $recommendedToolsResponse,
-                'conversation_id' => $conversation->id
-            ]
+                'conversation_id' => $conversation->id,
+            ],
         ]);
     }
 
-    public function history(Request $request)
+    public function history(Request $request): JsonResponse
     {
         $conversations = ChatConversation::where('user_id', $request->user()->id)
             ->with(['messages' => function ($q) {
@@ -96,7 +107,7 @@ class ChatController extends Controller
                 'id' => $conv->id,
                 'title' => $conv->title,
                 'last_message' => $conv->messages->first()->content ?? '',
-                'created_at' => $conv->created_at->toIso8601String()
+                'created_at' => $conv->created_at->toIso8601String(),
             ];
         });
 
@@ -107,18 +118,18 @@ class ChatController extends Controller
                 'pagination' => [
                     'current_page' => $conversations->currentPage(),
                     'total' => $conversations->total(),
-                    'last_page' => $conversations->lastPage()
-                ]
-            ]
+                    'last_page' => $conversations->lastPage(),
+                ],
+            ],
         ]);
     }
 
-    public function clearHistory(Request $request)
+    public function clearHistory(Request $request): JsonResponse
     {
         ChatConversation::where('user_id', $request->user()->id)->delete();
 
         return response()->json([
-            'message' => 'Chat history cleared successfully'
+            'message' => 'Chat history cleared successfully',
         ]);
     }
 }

@@ -5,8 +5,9 @@ namespace App\Jobs;
 use App\Models\AtomicSubTask;
 use App\Models\ScrapedTool;
 use App\Models\TaskMaster;
-use App\Services\GeminiService;
+use App\Services\OpenAIService;
 use App\Services\PdfTextExtractor;
+use App\Services\QdrantService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
@@ -23,7 +24,7 @@ class TaskDecompositionJob implements ShouldQueue
     ) {
     }
 
-    public function handle(GeminiService $geminiService, PdfTextExtractor $pdfTextExtractor): void
+    public function handle(OpenAIService $openAIService, PdfTextExtractor $pdfTextExtractor, QdrantService $qdrantService): void
     {
         $task = TaskMaster::query()->with('user.profile')->find($this->taskId);
 
@@ -35,22 +36,35 @@ class TaskDecompositionJob implements ShouldQueue
             $text = $this->resolveSourceText($task, $pdfTextExtractor);
             $preparedText = Str::limit(trim($text), 8000, '');
 
-            $result = $geminiService->decomposeTask($preparedText, [
+            $result = $openAIService->decomposeTask($preparedText, [
                 'major' => $task->user?->profile?->major,
                 'semester' => $task->user?->profile?->semester,
                 'language_preference' => $task->user?->profile?->language_preference,
             ]);
 
-            DB::transaction(function () use ($task, $result) {
+            DB::transaction(function () use ($task, $result, $qdrantService) {
                 $task->subTasks()->delete();
 
                 foreach ($result['sub_tasks'] as $index => $subTask) {
-                    $recommendedToolIds = ScrapedTool::query()
-                        ->where('category', $subTask['kategori_alat_ai_yang_rekomendasi'] ?? null)
-                        ->orderByDesc('rating')
-                        ->limit(3)
-                        ->pluck('id')
+                    $recommendedToolIds = collect($qdrantService->searchTools(
+                        trim(($subTask['judul_tugas'] ?? '').' '.($subTask['kategori_alat_ai_yang_rekomendasi'] ?? '')),
+                        $subTask['kategori_alat_ai_yang_rekomendasi'] ?? null,
+                        3,
+                        0.7
+                    ))
+                        ->pluck('tool_mysql_id')
+                        ->filter()
+                        ->values()
                         ->all();
+
+                    if ($recommendedToolIds === []) {
+                        $recommendedToolIds = ScrapedTool::query()
+                            ->where('category', $subTask['kategori_alat_ai_yang_rekomendasi'] ?? null)
+                            ->orderByDesc('rating')
+                            ->limit(3)
+                            ->pluck('id')
+                            ->all();
+                    }
 
                     AtomicSubTask::query()->create([
                         'sub_task_id' => (string) Str::uuid(),

@@ -3,7 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\SavedLibrary;
-use App\Services\GeminiService;
+use App\Services\OpenAIService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Throwable;
@@ -16,7 +16,7 @@ class TaggingJob implements ShouldQueue
         public string $bookmarkId
     ) {}
 
-    public function handle(GeminiService $geminiService): void
+    public function handle(OpenAIService $openAIService): void
     {
         $bookmark = SavedLibrary::query()->with(['tool', 'user.profile'])->find($this->bookmarkId);
 
@@ -25,7 +25,7 @@ class TaggingJob implements ShouldQueue
         }
 
         try {
-            $result = $geminiService->classifyBookmark($bookmark->tool, [
+            $result = $openAIService->classifyBookmark($bookmark->tool, [
                 'major' => $bookmark->user?->profile?->major,
                 'semester' => $bookmark->user?->profile?->semester,
                 'language_preference' => $bookmark->user?->profile?->language_preference,
