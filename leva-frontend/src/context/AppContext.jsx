@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { authService } from '../services/authService';
 import { bookmarkService } from '../services/bookmarkService';
 import { taskService } from '../services/taskService';
+import { normalizeLanguage, createTranslator } from '../utils/i18n';
 
 const AppContext = createContext(null);
 
@@ -9,9 +10,40 @@ export function AppProvider({ children }) {
   // User persona from onboarding
   const [user, setUser] = useState(null); // null = not onboarded yet
   const [token, setToken] = useState(() => localStorage.getItem('leva_token'));
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState(null);
 
   // Active view: 'landing' | 'onboarding' | 'dashboard' | 'chat' | 'library' | 'profile'
   const [activeView, setActiveViewState] = useState('landing');
+
+  // Theme support
+  const [theme, setThemeState] = useState(() => {
+    try {
+      const stored = localStorage.getItem('leva_theme');
+      if (stored === 'dark' || stored === 'light') return stored;
+    } catch { /* */ }
+    return 'light';
+  });
+
+  const isDarkMode = theme === 'dark';
+
+  const setTheme = useCallback((newTheme) => {
+    const validTheme = newTheme === 'dark' ? 'dark' : 'light';
+    setThemeState(validTheme);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setThemeState((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'));
+  }, []);
+
+  useEffect(() => {
+    const validTheme = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', validTheme);
+    try {
+      localStorage.setItem('leva_theme', validTheme);
+    } catch { /* */ }
+  }, [theme]);
 
   // Unsaved changes guards
   const [chatHasDraft, setChatHasDraft] = useState(false);
@@ -29,30 +61,94 @@ export function AppProvider({ children }) {
   // Toast notification
   const [toasts, setToasts] = useState([]);
 
+  // i18n — language preference
+  const [language, setLanguageState] = useState(() => {
+    try {
+      const stored = localStorage.getItem('leva_language');
+      if (stored) return normalizeLanguage(stored);
+    } catch { /* */ }
+    return 'id';
+  });
+
+  const t = useMemo(() => createTranslator(language), [language]);
+
+  const setLanguage = useCallback((lang) => {
+    const normalized = normalizeLanguage(lang);
+    setLanguageState(normalized);
+    try {
+      localStorage.setItem('leva_language', normalized);
+    } catch { /* */ }
+  }, []);
+
   // UX sound effect preference
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try {
+      const prefs = localStorage.getItem('leva_prefs');
+      if (prefs) return JSON.parse(prefs).soundEnabled ?? true;
+    } catch {
+      //
+    }
+    return true;
+  });
+
+  const updateSoundEnabled = (val) => {
+    const newVal = typeof val === 'function' ? val(soundEnabled) : val;
+    setSoundEnabled(newVal);
+    try {
+      const prefs = localStorage.getItem('leva_prefs');
+      const parsed = prefs ? JSON.parse(prefs) : {};
+      parsed.soundEnabled = newVal;
+      localStorage.setItem('leva_prefs', JSON.stringify(parsed));
+      
+      // Emit a toast for visual feedback when manually changed
+      if (typeof val !== 'function') {
+         // showToast will be available but we can't call it here easily due to deps. 
+         // We will call it from ProfileView when toggle happens instead of here.
+      }
+    } catch {
+      //
+    }
+  };
 
   useEffect(() => {
-    if (!token) return;
-
     let isMounted = true;
 
-    const bootstrap = async () => {
+    const bootstrapAuth = async () => {
+      if (!token) {
+        setIsBootstrapping(false);
+        setIsAuthenticated(false);
+        return;
+      }
+      
       try {
         const me = await authService.me();
         if (!isMounted) return;
         setUser(me);
-        setActiveViewState('dashboard');
+        if (me.status === 'ACTIVE') {
+          // Don't auto-navigate — let the user decide via CTA buttons.
+          // Only mark as authenticated so LandingView buttons can shortcut.
+          setIsAuthenticated(true);
+          // Sync language from user profile
+          const profileLang = me?.profile?.language_preference ?? me?.language_preference ?? me?.bahasa;
+          if (profileLang) setLanguage(profileLang);
+        } else {
+          setIsAuthenticated(false);
+          setActiveViewState('onboarding');
+        }
       } catch (error) {
         localStorage.removeItem('leva_token');
         if (!isMounted) return;
         setToken(null);
         setUser(null);
-        setActiveViewState('landing');
+        setIsAuthenticated(false);
+        setAuthError(error.message);
+        // Don't force to onboarding — stay on landing and let user click
+      } finally {
+        if (isMounted) setIsBootstrapping(false);
       }
     };
 
-    bootstrap();
+    bootstrapAuth();
 
     return () => {
       isMounted = false;
@@ -73,17 +169,33 @@ export function AppProvider({ children }) {
     setToasts((prev) => prev.filter((toastItem) => toastItem.id !== toastId));
   };
 
-  const refreshSavedTools = async (params = {}) => {
+  const refreshSavedTools = useCallback(async (params = {}) => {
     const data = await bookmarkService.list(params);
     setSavedTools(data.bookmarks ?? []);
     return data;
-  };
+  }, []);
 
-  const refreshHistoryTasks = async (params = {}) => {
+  const refreshHistoryTasks = useCallback(async (params = {}) => {
     const data = await taskService.list(params);
     setHistoryTasks(data.tasks ?? []);
     return data;
-  };
+  }, []);
+
+  // Explicit "enter the app" function — used by Landing CTA buttons.
+  // If user is already authenticated, go straight to dashboard.
+  // Otherwise go to onboarding.
+  const enterApp = useCallback((mode = 'login') => {
+    if (isAuthenticated && user?.status === 'ACTIVE') {
+      setActiveViewState('dashboard');
+      return;
+    }
+    setActiveViewState('onboarding');
+    if (mode === 'login') {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('leva:open-login'));
+      }, 50);
+    }
+  }, [isAuthenticated, user]);
 
   const setActiveView = (nextView, options = {}) => {
     const forceNavigate = options.force === true;
@@ -146,13 +258,21 @@ export function AppProvider({ children }) {
   return (
     <AppContext.Provider
       value={{
+        isBootstrapping,
+        isAuthenticated,
+        authError,
         user,
         setUser,
         token,
         setToken,
+        theme,
+        setTheme,
+        toggleTheme,
+        isDarkMode,
         activeView,
         setActiveView,
         setActiveViewState,
+        enterApp,
         chatHasDraft,
         setChatHasDraft,
         profileHasUnsavedChanges,
@@ -168,8 +288,11 @@ export function AppProvider({ children }) {
         toasts,
         showToast,
         dismissToast,
+        language,
+        setLanguage,
+        t,
         soundEnabled,
-        setSoundEnabled,
+        setSoundEnabled: updateSoundEnabled,
         saveToolToLibrary,
         removeToolFromLibrary,
       }}

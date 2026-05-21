@@ -488,7 +488,7 @@ export default function DashboardView() {
     fetchStats();
 
     if (refreshSavedTools) {
-      refreshSavedTools().catch(() => {});
+      refreshSavedTools().catch(() => { });
     }
 
     return () => {
@@ -497,7 +497,7 @@ export default function DashboardView() {
   }, []);
 
   const firstName = user ? user.name.split(' ')[0] : 'Renisa';
-  const jurusan   = user ? user.jurusan : 'Teknik Informatika';
+  const jurusan = user ? user.jurusan : 'Teknik Informatika';
 
   const hour = new Date().getHours();
   const greeting = hour < 11 ? 'Selamat pagi' : hour < 15 ? 'Selamat siang' : hour < 18 ? 'Selamat sore' : 'Selamat malam';

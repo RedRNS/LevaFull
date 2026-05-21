@@ -8,6 +8,31 @@ export default function Modal({ title, onClose, children }) {
     const previousOverflow = document.body.style.overflow;
     const previousActiveElement = document.activeElement;
 
+    const setInitialFocus = () => {
+      if (!dialogRef.current) return;
+      const candidates = Array.from(
+        dialogRef.current.querySelectorAll(
+          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      );
+      if (candidates.length > 0) {
+        candidates[0].focus();
+        return;
+      }
+      dialogRef.current?.focus();
+    };
+
+    /* UI/UX Fix: Step 7 — Dialog konfirmasi harus menjadi overlay global agar fokus aksi destruktif tidak terpotong area scroll/layout parent. */
+    document.body.style.overflow = 'hidden';
+    setInitialFocus();
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      if (previousActiveElement instanceof HTMLElement) previousActiveElement.focus();
+    };
+  }, []);
+
+  useEffect(() => {
     const focusableElements = () => {
       if (!dialogRef.current) return [];
 
@@ -16,16 +41,6 @@ export default function Modal({ title, onClose, children }) {
           'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
         )
       );
-    };
-
-    const setInitialFocus = () => {
-      const candidates = focusableElements();
-      if (candidates.length > 0) {
-        candidates[0].focus();
-        return;
-      }
-
-      dialogRef.current?.focus();
     };
 
     const handleKeyDown = (event) => {
@@ -55,15 +70,10 @@ export default function Modal({ title, onClose, children }) {
       }
     };
 
-    /* UI/UX Fix: Step 7 — Dialog konfirmasi harus menjadi overlay global agar fokus aksi destruktif tidak terpotong area scroll/layout parent. */
-    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', handleKeyDown);
-    setInitialFocus();
 
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', handleKeyDown);
-      if (previousActiveElement instanceof HTMLElement) previousActiveElement.focus();
     };
   }, [onClose]);
 

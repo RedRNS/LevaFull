@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { profileService } from '../services/profileService';
+import { normalizeLanguage } from '../utils/i18n';
 import AppIcon from '../components/AppIcon';
 import Modal from '../components/Modal';
 
@@ -19,6 +21,10 @@ export default function ProfileView() {
     setSoundEnabled,
     setProfileHasUnsavedChanges,
     showToast,
+    setLanguage,
+    theme,
+    setTheme,
+    t,
   } = useApp();
   const [editMode, setEditMode] = useState(false);
   const [notif1, setNotif1] = useState(true);
@@ -34,7 +40,7 @@ export default function ProfileView() {
     name: user?.name ?? 'Renisa Mahardika',
     jurusan: user?.jurusan ?? 'Teknik Informatika',
     semester: user?.semester ?? '6',
-    bahasa: user?.bahasa ?? 'Indonesia',
+    bahasa: normalizeLanguage(user?.language_preference ?? user?.profile?.language_preference ?? user?.bahasa ?? 'id'),
   });
   const [errors, setErrors] = useState({});
   const initialProfileRef = useRef({
@@ -42,7 +48,7 @@ export default function ProfileView() {
       name: user?.name ?? 'Renisa Mahardika',
       jurusan: user?.jurusan ?? 'Teknik Informatika',
       semester: user?.semester ?? '6',
-      bahasa: user?.bahasa ?? 'Indonesia',
+      bahasa: normalizeLanguage(user?.language_preference ?? user?.profile?.language_preference ?? user?.bahasa ?? 'id'),
     },
     notifications: {
       soundEnabled,
@@ -65,17 +71,17 @@ export default function ProfileView() {
     const trimmedName = form.name.trim();
 
     if (!trimmedName) {
-      nextErrors.name = 'Nama tidak boleh kosong.';
+      nextErrors.name = t('profile.nameEmpty');
     } else if (trimmedName.length < 2) {
-      nextErrors.name = 'Nama minimal 2 karakter.';
+      nextErrors.name = t('profile.nameMin');
     }
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
-  const commitProfileChanges = () => {
-    if (!validateProfileForm()) return;
+  const commitProfileChanges = async () => {
+    if (!validateProfileForm()) return false;
 
     try {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -84,7 +90,21 @@ export default function ProfileView() {
 
       const sanitizedForm = { ...form, name: form.name.trim() };
 
-      setUser(sanitizedForm);
+      // Persist to backend
+      try {
+        await profileService.update({
+          major: sanitizedForm.jurusan,
+          semester: sanitizedForm.semester,
+          language_preference: sanitizedForm.bahasa,
+        });
+      } catch { /* best-effort — profile still updates locally */ }
+
+      setUser((prev) => ({
+        ...prev,
+        ...sanitizedForm,
+        language_preference: sanitizedForm.bahasa,
+      }));
+      setLanguage(sanitizedForm.bahasa);
       setForm(sanitizedForm);
       initialProfileRef.current = {
         form: sanitizedForm,
@@ -98,10 +118,10 @@ export default function ProfileView() {
 
       setErrors({});
       setEditMode(false);
-      showToast('Perubahan profil berhasil disimpan!', 'success');
+      showToast(t('profile.saveSuccess'), 'success');
       return true;
     } catch {
-      showToast('Perubahan gagal disimpan. Periksa koneksimu dan coba lagi.', 'error');
+      showToast(t('profile.saveFail'), 'error');
       return false;
     }
   };
@@ -299,9 +319,16 @@ export default function ProfileView() {
     setPendingLeaveTarget(null);
   };
 
+  const handleThemeChange = (nextTheme) => {
+    if (theme === nextTheme) return;
+    setTheme(nextTheme);
+    showToast(t('profile.themeUpdated'), 'success');
+  };
+
   const inputStyle = {
     width: '100%', padding: '10px 13px',
     border: '1px solid var(--color-border)', borderRadius: 9,
+    background: 'var(--color-surface)', color: 'var(--color-text-primary)',
     fontSize: 13, outline: 'none', boxSizing: 'border-box',
   };
 
@@ -343,7 +370,7 @@ export default function ProfileView() {
     <div className="main-content view-enter" style={{ padding: '32px 36px', maxWidth: 680, margin: '0 auto' }}>
 
       <h1 style={{ margin: '0 0 24px', fontSize: 24, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <AppIcon name="user" size={22} /> Profil & Pengaturan
+        <AppIcon name="user" size={22} /> {t('profile.title')}
       </h1>
 
       {/* -- Profile Card */}
@@ -363,12 +390,12 @@ export default function ProfileView() {
               {form.jurusan} · Semester {form.semester}
             </p>
             <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="book" size={12} /> {form.bahasa}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="book" size={12} /> {form.bahasa === 'en' ? 'English' : 'Indonesia'}</span>
             </p>
           </div>
           {!editMode && (
             <button className="btn-ghost" onClick={() => { setErrors({}); setEditMode(true); }} style={{ padding: '8px 16px', fontSize: 13 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="pencil" size={12} /> Edit</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="pencil" size={12} /> {t('profile.edit')}</span>
             </button>
           )}
         </div>
@@ -378,7 +405,7 @@ export default function ProfileView() {
           <div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 5 }}>Nama</label>
+                <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 5 }}>{t('profile.name')}</label>
                 <input
                   value={form.name}
                   onChange={e => update('name', e.target.value)}
@@ -390,31 +417,31 @@ export default function ProfileView() {
                 {errText('name')}
               </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 5 }}>Semester</label>
+                <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 5 }}>{t('profile.semester')}</label>
                 <select value={form.semester} onChange={e => update('semester', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
                   {SEMESTER_OPTIONS.map(s => <option key={s} value={s}>Semester {s}</option>)}
                 </select>
               </div>
             </div>
             <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 5 }}>Jurusan</label>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 5 }}>{t('profile.major')}</label>
               <select value={form.jurusan} onChange={e => update('jurusan', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
                 {JURUSAN_OPTIONS.map(j => <option key={j} value={j}>{j}</option>)}
               </select>
             </div>
             <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 8 }}>Preferensi Bahasa</label>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 8 }}>{t('profile.language')}</label>
               <div style={{ display: 'flex', gap: 10 }}>
-                {['Indonesia', 'English'].map(lang => (
-                  <button key={lang} onClick={() => update('bahasa', lang)} style={{ flex: 1, padding: '9px', borderRadius: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s', background: form.bahasa === lang ? 'var(--color-primary)' : 'var(--color-bg)', color: form.bahasa === lang ? '#fff' : 'var(--color-text-secondary)', border: `1.5px solid ${form.bahasa === lang ? 'var(--color-primary)' : 'var(--color-border)'}` }}>
-                    {lang === 'Indonesia' ? 'ID Indonesia' : 'EN English'}
+                {[{ code: 'id', label: 'ID Indonesia' }, { code: 'en', label: 'EN English' }].map(lang => (
+                  <button key={lang.code} onClick={() => update('bahasa', lang.code)} style={{ flex: 1, padding: '9px', borderRadius: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s', background: form.bahasa === lang.code ? 'var(--color-primary)' : 'var(--color-bg)', color: form.bahasa === lang.code ? '#fff' : 'var(--color-text-secondary)', border: `1.5px solid ${form.bahasa === lang.code ? 'var(--color-primary)' : 'var(--color-border)'}` }}>
+                    {lang.label}
                   </button>
                 ))}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn-ghost" onClick={resetProfileDraft} style={{ flex: 1 }}>Batal</button>
-              <button className="btn-primary" onClick={handleSave} style={{ flex: 2, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}><AppIcon name="check" size={14} color="#fff" /> Simpan Perubahan</button>
+              <button className="btn-ghost" onClick={resetProfileDraft} style={{ flex: 1 }}>{t('profile.cancel')}</button>
+              <button className="btn-primary" onClick={handleSave} style={{ flex: 2, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}><AppIcon name="check" size={14} color="#fff" /> {t('profile.save')}</button>
             </div>
           </div>
         )}
@@ -422,7 +449,7 @@ export default function ProfileView() {
 
       {/* -- Stats Card */}
       <div className="card" style={{ padding: '20px 24px', marginBottom: 20 }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="dashboard" size={16} /> Statistik Penggunaan</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="dashboard" size={16} /> {t('profile.stats')}</h3>
         <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
           {[
             {
@@ -447,7 +474,7 @@ export default function ProfileView() {
               label: 'Hari Berturut-turut',
               aria: 'Lihat progres streak harian',
               trendText: '- sama dengan minggu lalu',
-              trendColor: '#64748B',
+              trendColor: 'var(--color-text-secondary)',
             },
           ].map(stat => {
             const isHovered = hoveredStat === stat.label;
@@ -457,9 +484,9 @@ export default function ProfileView() {
             const baseStyle = {
               textAlign: 'center',
               padding: '16px 10px',
-              background: isHovered ? '#FFFFFF' : 'var(--color-bg)',
+              background: isHovered ? 'var(--color-surface)' : 'var(--color-bg)',
               borderRadius: 12,
-              border: isHovered ? '1px solid #DDD8FF' : '1px solid transparent',
+              border: isHovered ? '1px solid var(--color-primary)' : '1px solid transparent',
               cursor: 'pointer',
               boxShadow: isHovered ? '0 10px 24px rgba(108,99,255,0.14)' : '0 2px 8px rgba(15,23,42,0.06)',
               transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
@@ -491,14 +518,42 @@ export default function ProfileView() {
         </div>
       </div>
 
+      {/* -- Appearance Preferences */}
+      <div className="card" style={{ padding: '20px 24px', marginBottom: 20 }}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="settings" size={16} /> {t('profile.appearanceMode')}</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{t('profile.appearanceMode')}</p>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              type="button"
+              aria-pressed={theme === 'light'}
+              onClick={() => handleThemeChange('light')}
+              style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s', background: theme === 'light' ? 'var(--color-primary)' : 'var(--color-bg)', color: theme === 'light' ? '#fff' : 'var(--color-text-secondary)', border: `1.5px solid ${theme === 'light' ? 'var(--color-primary)' : 'var(--color-border)'}` }}
+            >
+              {t('profile.lightMode')}
+            </button>
+            <button
+              type="button"
+              aria-pressed={theme === 'dark'}
+              onClick={() => handleThemeChange('dark')}
+              style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s', background: theme === 'dark' ? 'var(--color-primary)' : 'var(--color-bg)', color: theme === 'dark' ? '#fff' : 'var(--color-text-secondary)', border: `1.5px solid ${theme === 'dark' ? 'var(--color-primary)' : 'var(--color-border)'}` }}
+            >
+              {t('profile.darkMode')}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* -- Notification Preferences */}
       <div className="card" style={{ padding: '20px 24px', marginBottom: 20 }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="bell" size={16} /> Preferensi Notifikasi</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="bell" size={16} /> {t('profile.notifications')}</h3>
         {[
-          { label: 'Efek Suara', sub: 'Putar suara saat menyelesaikan tugas', val: soundEnabled, set: setSoundEnabled },
-          { label: 'Pengingat Harian', sub: 'Ingatkan tools AI baru setiap hari', val: notif1, set: setNotif1 },
-          { label: 'Tips Penggunaan Mingguan', sub: 'Tips produktivitas setiap minggu', val: notif2, set: setNotif2 },
-          { label: 'Pembaruan Tool Baru', sub: 'Tools baru sesuai jurusanmu', val: notif3, set: setNotif3 },
+          { label: t('profile.sound'), sub: t('profile.soundSub'), val: soundEnabled, set: setSoundEnabled },
+          { label: t('profile.dailyDiscovery'), sub: t('profile.dailyDiscoverySub'), val: notif1, set: setNotif1 },
+          { label: t('profile.weeklyReport'), sub: t('profile.weeklyReportSub'), val: notif2, set: setNotif2 },
+          { label: t('profile.emailNotif'), sub: t('profile.emailNotifSub'), val: notif3, set: setNotif3 },
         ].map((item, i, arr) => (
           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: i < arr.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
             <div>
@@ -517,26 +572,26 @@ export default function ProfileView() {
           onClick={handleLogoutOnly}
           style={{
             width: '100%', padding: '13px', borderRadius: 12, border: '1.5px solid var(--color-border)',
-            background: '#fff', color: 'var(--color-text-secondary)', fontSize: 14, fontWeight: 600,
+            background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: 14, fontWeight: 600,
             cursor: 'pointer', transition: 'all 0.2s',
           }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--color-primary)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="logout" size={14} /> Keluar</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="logout" size={14} /> {t('profile.logout')}</span>
         </button>
 
         <button
           onClick={() => setShowResetModal(true)}
           style={{
-            width: '100%', padding: '13px', borderRadius: 12, border: '1.5px solid #FEE2E2',
-            background: '#FFF5F5', color: '#DC2626', fontSize: 14, fontWeight: 600,
+            width: '100%', padding: '13px', borderRadius: 12, border: '1.5px solid var(--color-danger)',
+            background: 'var(--color-danger-soft)', color: 'var(--color-danger)', fontSize: 14, fontWeight: 600,
             cursor: 'pointer', transition: 'all 0.2s',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = '#FFF5F5'; }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(220, 38, 38, 0.16)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'var(--color-danger-soft)'; }}
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="trash" size={14} /> Reset Demo</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppIcon name="trash" size={14} /> {t('profile.resetDemoBtn')}</span>
         </button>
       </div>
 
@@ -613,10 +668,10 @@ export default function ProfileView() {
               onClick={handleDiscardAndLeave}
               style={{
                 width: '100%',
-                border: '1px solid #FECACA',
+                border: '1px solid var(--color-danger)',
                 borderRadius: 10,
-                background: '#fff',
-                color: '#B91C1C',
+                background: 'var(--color-surface)',
+                color: 'var(--color-danger)',
                 fontSize: 14,
                 fontWeight: 600,
                 padding: '10px 14px',

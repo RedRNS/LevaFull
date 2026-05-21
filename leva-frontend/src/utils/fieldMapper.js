@@ -3,7 +3,7 @@ export function mapOnboardingToApi(form) {
     major: form.jurusan,
     semester: parseInt(form.semester, 10),
     language_preference: form.bahasa === 'Indonesia' ? 'id' : 'en',
-    learning_style: form.learning_style ?? 'visual',
+    learning_style: form.learning_style || form.learningStyle || 'visual',
   };
 }
 

@@ -53,7 +53,7 @@ const LEARNING_STYLE_OPTIONS = [
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function OnboardingView() {
-  const { setUser, setActiveView, showToast, soundEnabled } = useApp();
+  const { user, setUser, setActiveView, showToast, soundEnabled } = useApp();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
     name: '',
@@ -130,8 +130,15 @@ export default function OnboardingView() {
   }, []);
 
   useEffect(() => {
-    if (step === 1) nameInputRef.current?.focus();
-  }, [step]);
+    if (step === 1 && !user) nameInputRef.current?.focus();
+  }, [step, user]);
+
+  useEffect(() => {
+    if (user && user.status === 'PENDING' && step === 1) {
+      setForm(prev => ({ ...prev, name: user.name || '', email: user.email || '' }));
+      setStep(2);
+    }
+  }, [user, step]);
 
   useEffect(() => {
     if (!stepAnimationClass) return;
@@ -341,20 +348,38 @@ export default function OnboardingView() {
     return true;
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (step === 1 && validateStep1()) {
+      if (!user) {
+        setIsSubmitting(true);
+        try {
+          await authService.register(form.name, form.email, form.password);
+          await authService.login(form.email, form.password);
+          const fullUser = await authService.me();
+          setUser(fullUser);
+        } catch (error) {
+          const msg = error.response?.data?.message ?? 'Email sudah terdaftar atau tidak valid.';
+          setErrors(prev => ({ ...prev, email: msg }));
+          setIsSubmitting(false);
+          return;
+        }
+        setIsSubmitting(false);
+      }
       setStepAnimationClass('onboarding-slide-next');
       setStep(2);
+      return;
     }
 
     if (step === 2 && validateStep2()) {
       setStepAnimationClass('onboarding-slide-next');
       setStep(3);
+      return;
     }
 
     if (step === 3 && validateStep3()) {
       setStepAnimationClass('onboarding-slide-next');
       setStep(4);
+      return;
     }
   };
 
@@ -372,10 +397,13 @@ export default function OnboardingView() {
     setIsSubmitting(true);
 
     try {
-      await authService.register(form.name, form.email, form.password);
-      const user = await authService.login(form.email, form.password);
-
-      if (user.status === 'PENDING') {
+      if (!user) {
+        await authService.register(form.name, form.email, form.password);
+        const loggedInUser = await authService.login(form.email, form.password);
+        if (loggedInUser.status === 'PENDING') {
+          await profileService.create(mapOnboardingToApi(form));
+        }
+      } else {
         await profileService.create(mapOnboardingToApi(form));
       }
 
@@ -421,9 +449,15 @@ export default function OnboardingView() {
       await authService.login(loginForm.email, loginForm.password);
       const me = await authService.me();
       setUser(me);
-      setActiveView('dashboard');
       setShowLoginModal(false);
-      showToast('Selamat datang kembali!', 'success');
+      if (me.status === 'ACTIVE') {
+        setActiveView('dashboard');
+        showToast('Selamat datang kembali!', 'success');
+      } else {
+        setForm(prev => ({ ...prev, name: me.name || '', email: me.email || '' }));
+        setStep(2);
+        showToast('Silakan lengkapi profilmu.', 'info');
+      }
     } catch (error) {
       const msg = error.response?.data?.message ?? 'Login gagal. Periksa email dan password.';
       showToast(msg, 'error');
@@ -655,18 +689,28 @@ export default function OnboardingView() {
             <button
               className="btn-primary"
               onClick={handleNext}
-              aria-disabled={!isStep1Complete}
+              disabled={!isStep1Complete || isSubmitting}
+              aria-disabled={!isStep1Complete || isSubmitting}
               style={{
                 width: '100%',
                 padding: '13px',
                 marginTop: 20,
                 fontSize: 15,
-                opacity: isStep1Complete ? 1 : 0.6,
-                cursor: isStep1Complete ? 'pointer' : 'not-allowed',
+                opacity: (isStep1Complete && !isSubmitting) ? 1 : 0.6,
+                cursor: (isStep1Complete && !isSubmitting) ? 'pointer' : 'not-allowed',
               }}
             >
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                Lanjut <AppIcon name="arrow-right" size={14} color="#fff" />
+                {isSubmitting ? (
+                  <>
+                    <AppIcon name="loader" size={16} color="#fff" className="animate-spin" />
+                    Mendaftar...
+                  </>
+                ) : (
+                  <>
+                    Lanjut <AppIcon name="arrow-right" size={14} color="#fff" />
+                  </>
+                )}
               </span>
             </button>
 
@@ -922,17 +966,12 @@ export default function OnboardingView() {
             </div>
 
             <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-              <button className="btn-ghost" onClick={() => goToPreviousStep(1)} style={{ flex: 1, padding: '13px' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <AppIcon name="arrow-left" size={14} /> Kembali
-                </span>
-              </button>
               <button
                 className="btn-primary"
                 onClick={handleNext}
                 aria-disabled={!isStep2Complete}
                 style={{
-                  flex: 2,
+                  flex: 1,
                   padding: '13px',
                   fontSize: 15,
                   opacity: isStep2Complete ? 1 : 0.6,
@@ -946,7 +985,7 @@ export default function OnboardingView() {
                   if (isStep2Complete) event.currentTarget.style.filter = 'none';
                 }}
               >
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%' }}>
                   Lanjut <AppIcon name="arrow-right" size={14} color="#fff" />
                 </span>
               </button>
@@ -1090,7 +1129,7 @@ export default function OnboardingView() {
                 {isSubmitting ? (
                   <>
                     <AppIcon name="loader" size={16} color="#fff" className="animate-spin" />
-                    Memproses...
+                    Menyiapkan profil...
                   </>
                 ) : (
                   <>

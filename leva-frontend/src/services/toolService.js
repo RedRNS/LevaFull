@@ -1,20 +1,20 @@
 import api from './api';
 
 export const toolService = {
-  async list(params = {}) {
+  async getTools(params = {}) {
     const { data } = await api.get('/tools', { params });
-    return data.data;
+    return data.data || data;
   },
 
-  async get(id) {
+  async getToolDetail(id) {
     const { data } = await api.get(`/tools/${id}`);
-    return data.data.tool;
+    return data.data?.tool || data.tool || data;
   },
 
-  async search(q, params = {}) {
+  async searchTools(q, limit) {
     const { data } = await api.get('/tools/search', {
-      params: { q, ...params },
+      params: { q, limit },
     });
-    return data.data;
+    return data.data || data;
   },
 };

@@ -4,10 +4,10 @@ import Modal from './Modal';
 import AppIcon from './AppIcon';
 
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard',   icon: 'home' },
-  { id: 'chat',      label: 'Chat & Task', icon: 'message' },
-  { id: 'library',   label: 'Library',     icon: 'library' },
-  { id: 'profile',   label: 'Profile',     icon: 'user' },
+  { id: 'dashboard', label: 'sidebar.dashboard', icon: 'home' },
+  { id: 'chat',      label: 'sidebar.chat',      icon: 'message' },
+  { id: 'library',   label: 'sidebar.library',    icon: 'library' },
+  { id: 'profile',   label: 'sidebar.profile',    icon: 'user' },
 ];
 
 export default function Sidebar() {
@@ -21,9 +21,11 @@ export default function Sidebar() {
     refreshHistoryTasks,
     soundEnabled,
     setSoundEnabled,
+    isDarkMode,
+    toggleTheme,
+    t,
   } = useApp();
   const [showSettings, setShowSettings] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
   const [notif, setNotif]       = useState(true);
   const [searchVal, setSearchVal] = useState('');
   const searchInputRef = useRef(null);
@@ -61,9 +63,9 @@ export default function Sidebar() {
   }, []);
 
   useEffect(() => {
-    if (!refreshHistoryTasks) return;
+    if (!user || !refreshHistoryTasks) return;
     refreshHistoryTasks().catch(() => {});
-  }, [refreshHistoryTasks]);
+  }, [user, refreshHistoryTasks]);
 
   const handleHistoryClick = (task) => {
     setActiveTask(task);
@@ -116,7 +118,7 @@ export default function Sidebar() {
           onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
         >
-          <AppIcon name="plus" size={16} color="#fff" /> New Chat
+          <AppIcon name="plus" size={16} color="#fff" /> {t('sidebar.newChat')}
         </button>
 
         {/* Search */}
@@ -128,7 +130,7 @@ export default function Sidebar() {
             ref={searchInputRef}
             value={searchVal}
             onChange={e => setSearchVal(e.target.value)}
-            placeholder="Cari riwayat... (Ctrl+K)"
+            placeholder={t('sidebar.searchHistory')}
             style={{
               width: '100%', background: 'rgba(255,255,255,0.07)',
               border: '1px solid rgba(255,255,255,0.1)',
@@ -142,14 +144,14 @@ export default function Sidebar() {
         {activeView === 'dashboard' && searchVal.trim().length > 0 && filteredHistory.length === 0 && (
           <div style={{ marginTop: -6, marginBottom: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '10px 10px' }}>
             <p style={{ margin: 0, fontSize: 12, color: 'var(--color-sidebar-text)', lineHeight: 1.5 }}>
-              Tidak ada riwayat tugas yang cocok. Coba kata kunci lain atau mulai tugas baru.
+              {t('sidebar.noHistory')}
             </p>
             <button
               type="button"
               onClick={handleNewChat}
               style={{ marginTop: 8, border: 'none', background: 'transparent', color: '#C4B5FD', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0 }}
             >
-              Mulai Chat Baru →
+              {t('sidebar.startNewChat')}
             </button>
           </div>
         )}
@@ -166,7 +168,7 @@ export default function Sidebar() {
               style={{ width: '100%', background: 'transparent', border: 'none', textAlign: 'left' }}
             >
               <span style={{ display: 'flex' }}><AppIcon name={item.icon} size={16} /></span>
-              {item.label}
+              {t(item.label)}
             </button>
           ))}
           <button
@@ -175,7 +177,7 @@ export default function Sidebar() {
             onClick={() => setShowSettings(true)}
             style={{ width: '100%', background: 'transparent', border: 'none', textAlign: 'left' }}
           >
-            <span style={{ display: 'flex' }}><AppIcon name="settings" size={16} /></span> Settings
+            <span style={{ display: 'flex' }}><AppIcon name="settings" size={16} /></span> {t('sidebar.settings')}
           </button>
           <button
             type="button"
@@ -183,7 +185,7 @@ export default function Sidebar() {
             onClick={handleOpenTutorial}
             style={{ width: '100%', background: 'transparent', border: 'none', textAlign: 'left' }}
           >
-            <span style={{ display: 'flex' }}><AppIcon name="sparkles" size={16} /></span> Lihat Tutorial
+            <span style={{ display: 'flex' }}><AppIcon name="sparkles" size={16} /></span> {t('sidebar.viewTutorial')}
           </button>
         </nav>
 
@@ -193,7 +195,7 @@ export default function Sidebar() {
         {/* History */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-sidebar-text-muted)', letterSpacing: '0.08em', marginBottom: 8, paddingLeft: 4 }}>
-            RIWAYAT TUGAS
+            {t('sidebar.taskHistory')}
           </p>
           {filteredHistory.map(task => {
             const taskId = task.task_id ?? task.id;
@@ -277,9 +279,9 @@ export default function Sidebar() {
 
             {/* Toggle row helper */}
             {[
-              { label: 'Dark Mode', sublabel: 'Ganti tema ke gelap', val: darkMode, set: setDarkMode },
-              { label: 'Notifikasi Daily Discovery', sublabel: 'Reminder tools baru setiap hari', val: notif, set: setNotif },
-              { label: 'Efek Suara', sublabel: 'Putar suara saat menyelesaikan tugas', val: soundEnabled, set: setSoundEnabled },
+              { label: t('settings.darkMode'), sublabel: t('settings.darkModeSub'), val: isDarkMode, onToggle: toggleTheme },
+              { label: t('settings.notif'), sublabel: t('settings.notifSub'), val: notif, set: setNotif },
+              { label: t('settings.sound'), sublabel: t('settings.soundSub'), val: soundEnabled, set: setSoundEnabled },
             ].map(item => (
               <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -290,7 +292,7 @@ export default function Sidebar() {
                   type="button"
                   aria-label={`Toggle ${item.label}`}
                   aria-pressed={item.val}
-                  onClick={() => item.set(v => !v)}
+                  onClick={() => item.onToggle ? item.onToggle() : item.set(v => !v)}
                   style={{
                     width: 44, height: 24, borderRadius: 12, cursor: 'pointer',
                     background: item.val ? 'var(--color-primary)' : 'var(--color-border)',
@@ -310,11 +312,11 @@ export default function Sidebar() {
             <div style={{ height: 1, background: 'var(--color-border)' }} />
 
             <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)', textAlign: 'center' }}>
-              Leva v1.0.0 · Dibuat untuk Hackathon
+              {t('sidebar.version')}
             </p>
 
             <button className="btn-primary" onClick={() => setShowSettings(false)} style={{ width: '100%' }}>
-              Tutup
+              {t('sidebar.close')}
             </button>
           </div>
         </Modal>
