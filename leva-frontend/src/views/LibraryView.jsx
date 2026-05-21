@@ -1,25 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { bookmarkService } from '../services/bookmarkService';
+import { toolService } from '../services/toolService';
 import { PRIORITY_LABELS } from '../utils/fieldMapper';
 import Modal from '../components/Modal';
 import AppIcon from '../components/AppIcon';
 
-const PRIORITY_OPTIONS = [
-  { value: 'all', label: 'Semua' },
-  ...Object.entries(PRIORITY_LABELS).map(([key, meta]) => ({
-    value: key,
-    label: meta.label,
-  })),
+const PRIORITY_KEYS = [
+  { value: 'all', key: 'library.priorityAll' },
+  { value: 'must_try', key: 'library.priorityMustTry' },
+  { value: 'very_good', key: 'library.priorityVeryGood' },
+  { value: 'niche', key: 'library.priorityNiche' },
+  { value: 'optional', key: 'library.priorityOptional' },
 ];
-const CATEGORY_FILTERS = ['Semua', 'Research', 'Writing', 'Coding', 'Data', 'Academic', 'Productivity'];
-const SORT_OPTIONS = [
-  { value: 'latest', label: 'Terbaru disimpan' },
-  { value: 'oldest', label: 'Terlama disimpan' },
-  { value: 'rating', label: 'Rating tertinggi' },
+
+const SORT_KEYS = [
+  { value: 'latest', key: 'library.sortLatest' },
+  { value: 'oldest', key: 'library.sortOldest' },
+  { value: 'rating', key: 'library.sortRating' },
   { value: 'az', label: 'A-Z' },
   { value: 'za', label: 'Z-A' },
 ];
+
+const getNormalizedPriorityKey = (utilityPriority, priorityLabel) => {
+  if (utilityPriority) return utilityPriority;
+  if (!priorityLabel) return null;
+  const lowerLabel = priorityLabel.toLowerCase();
+  if (lowerLabel.includes('wajib') || lowerLabel.includes('must')) return 'must_try';
+  if (lowerLabel.includes('sangat') || lowerLabel.includes('very')) return 'very_good';
+  if (lowerLabel.includes('opsional') || lowerLabel.includes('optional')) return 'optional';
+  if (lowerLabel.includes('niche') || lowerLabel.includes('bagus')) return 'niche';
+  return null;
+};
+const CATEGORY_FILTERS = ['all', 'Research', 'Writing', 'Coding', 'Data', 'Academic', 'Productivity'];
 
 const INDONESIAN_MONTH_MAP = {
   jan: 0,
@@ -88,8 +101,8 @@ function PriorityBadge({ priorityKey, label }) {
   const meta = priorityKey ? PRIORITY_LABELS[priorityKey] : null;
   const style = meta
     ? { background: meta.bg, color: meta.color }
-    : { background: '#E2E8F0', color: '#64748B' };
-  const text = label || meta?.label || 'Menunggu';
+    : { background: 'var(--color-bg)', color: 'var(--color-text-secondary)' };
+  const text = label || meta?.label || 'Menunggu Label';
   return (
     <span style={{ ...style, fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 999, whiteSpace: 'nowrap' }}>
       {text}
@@ -193,12 +206,12 @@ function SavedToolCard({ tool, onDelete }) {
         <button
           onClick={() => onDelete(tool)}
           style={{
-            flex: 1, padding: '8px', borderRadius: 9, border: '1px solid #FEE2E2',
-            background: '#FFF5F5', color: '#DC2626', cursor: 'pointer',
+            flex: 1, padding: '8px', borderRadius: 9, border: '1px solid var(--color-danger)',
+            background: 'var(--color-danger-soft)', color: 'var(--color-danger)', cursor: 'pointer',
             fontSize: 13, fontWeight: 500, transition: 'all 0.2s',
           }}
-          onMouseEnter={e => e.currentTarget.style.background = '#FEE2E2'}
-          onMouseLeave={e => e.currentTarget.style.background = '#FFF5F5'}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(220, 38, 38, 0.16)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'var(--color-danger-soft)'}
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <AppIcon name="trash" size={14} /> Hapus
@@ -215,21 +228,41 @@ export default function LibraryView() {
     setActiveView,
     showToast,
     refreshSavedTools,
+    t,
   } = useApp();
   const [priorityFilter, setPriorityFilter] = useState('all');
-  const [categoryFilter, setCategoryFilter] = useState('Semua');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [searchVal, setSearchVal] = useState('');
   const [debouncedSearchVal, setDebouncedSearchVal] = useState('');
   const [sortBy, setSortBy] = useState('latest');
   const [showAddModal, setShowAddModal] = useState(false);
   const [toolToDelete, setToolToDelete] = useState(null);
-  const [newTool, setNewTool] = useState({ name: '', url: '', note: '', category: 'Research' });
+
+  const [searchToolQuery, setSearchToolQuery] = useState('');
+  const [debouncedSearchToolQuery, setDebouncedSearchToolQuery] = useState('');
+  const [searchToolResults, setSearchToolResults] = useState([]);
+  const [isSearchingTool, setIsSearchingTool] = useState(false);
+  const [selectedToolToSave, setSelectedToolToSave] = useState(null);
+  const [saveToolNote, setSaveToolNote] = useState('');
+  const [isSavingTool, setIsSavingTool] = useState(false);
+  
   const [bookmarks, setBookmarks] = useState([]);
   const [pagination, setPagination] = useState({ current_page: 1, total: 0, last_page: 1 });
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [tags, setTags] = useState([]);
   const [selectedTag, setSelectedTag] = useState('');
+  const requestRef = useRef(0);
+
+  const displayedTags = useMemo(() => {
+    if (tags && tags.length > 0) return tags;
+    const extracted = new Set();
+    bookmarks.forEach(item => {
+      const kw = Array.isArray(item.semantic_keywords) ? item.semantic_keywords : (Array.isArray(item.keywords) ? item.keywords : []);
+      kw.forEach(k => { if (k && typeof k === 'string') extracted.add(k.trim().toLowerCase()); });
+    });
+    return Array.from(extracted);
+  }, [tags, bookmarks]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -240,6 +273,7 @@ export default function LibraryView() {
   }, [searchVal]);
 
   const fetchBookmarks = useCallback(async () => {
+    const currentRequestId = ++requestRef.current;
     setIsLoading(true);
     setErrorMessage('');
 
@@ -248,27 +282,34 @@ export default function LibraryView() {
       if (priorityFilter !== 'all') {
         params.priority = priorityFilter;
       }
-      if (categoryFilter !== 'Semua') {
+      if (categoryFilter !== 'all') {
         params.category = categoryFilter;
       }
       if (debouncedSearchVal) {
         params.q = debouncedSearchVal;
       }
 
-      const data = await bookmarkService.list(params);
-      setBookmarks(data.bookmarks ?? []);
-      setPagination(data.pagination ?? { current_page: 1, total: 0, last_page: 1 });
+      const data = await bookmarkService.getBookmarks(params);
+      
+      if (requestRef.current === currentRequestId) {
+        setBookmarks(data.bookmarks ?? []);
+        setPagination(data.pagination ?? { current_page: 1, total: 0, last_page: 1 });
+      }
     } catch (error) {
-      const message = error.response?.data?.message ?? 'Gagal memuat Library. Coba lagi.';
-      setErrorMessage(message);
+      if (requestRef.current === currentRequestId) {
+        const message = error.response?.data?.message ?? 'Library belum bisa dimuat. Pastikan backend API berjalan.';
+        setErrorMessage(message);
+      }
     } finally {
-      setIsLoading(false);
+      if (requestRef.current === currentRequestId) {
+        setIsLoading(false);
+      }
     }
   }, [priorityFilter, categoryFilter, debouncedSearchVal, sortBy]);
 
   const fetchTags = useCallback(async () => {
     try {
-      const tagList = await bookmarkService.tags();
+      const tagList = await bookmarkService.getTags();
       setTags(Array.isArray(tagList) ? tagList : []);
     } catch {
       setTags([]);
@@ -282,6 +323,38 @@ export default function LibraryView() {
   useEffect(() => {
     fetchTags();
   }, [fetchTags]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setDebouncedSearchToolQuery(searchToolQuery.trim());
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [searchToolQuery]);
+
+  useEffect(() => {
+    if (!showAddModal) return;
+
+    let isMounted = true;
+    const fetchSearchTools = async () => {
+      setIsSearchingTool(true);
+      try {
+        let data;
+        if (debouncedSearchToolQuery) {
+          data = await toolService.searchTools(debouncedSearchToolQuery, 12);
+        } else {
+          data = await toolService.list({ per_page: 12 });
+        }
+        if (isMounted) setSearchToolResults(data.tools ?? []);
+      } catch {
+        if (isMounted) setSearchToolResults([]);
+      } finally {
+        if (isMounted) setIsSearchingTool(false);
+      }
+    };
+
+    fetchSearchTools();
+    return () => { isMounted = false; };
+  }, [debouncedSearchToolQuery, showAddModal]);
 
   useEffect(() => {
     if (refreshSavedTools) {
@@ -300,11 +373,12 @@ export default function LibraryView() {
     const name = baseTool.name ?? item?.name ?? '';
     const pricingTypeRaw = baseTool.pricing_type ?? baseTool.pricingType ?? item?.pricingType ?? 'freemium';
     const pricingType = normalizePricingType(pricingTypeRaw);
-    const utilityPriority = item?.utility_priority ?? item?.priorityKey ?? null;
+    const utilityPriorityRaw = item?.utility_priority ?? item?.priorityKey ?? null;
     const priorityLabel = item?.priority_label
-      ?? (utilityPriority ? PRIORITY_LABELS[utilityPriority]?.label : null)
       ?? item?.priority
-      ?? 'Menunggu';
+      ?? (utilityPriorityRaw ? PRIORITY_LABELS[utilityPriorityRaw]?.label : null)
+      ?? 'Menunggu Label';
+    const utilityPriority = getNormalizedPriorityKey(utilityPriorityRaw, priorityLabel);
     const keywords = Array.isArray(item?.semantic_keywords)
       ? item.semantic_keywords
       : (Array.isArray(item?.keywords) ? item.keywords : []);
@@ -379,8 +453,8 @@ export default function LibraryView() {
 
     try {
       const toolId = toolToDelete.toolId ?? toolToDelete.id;
-      await bookmarkService.delete(toolId);
-      showToast('Tool berhasil dihapus', 'info');
+      await bookmarkService.deleteBookmark(toolId);
+      showToast(t('library.deleteSuccess'), 'info');
       setToolToDelete(null);
       fetchBookmarks();
       fetchTags();
@@ -388,31 +462,32 @@ export default function LibraryView() {
         refreshSavedTools().catch(() => {});
       }
     } catch (error) {
-      const message = error.response?.data?.message ?? 'Gagal menghapus tool. Coba lagi.';
+      const message = error.response?.data?.message ?? t('library.deleteFail');
       showToast(message, 'error');
     }
   };
 
-  const handleAddTool = () => {
-    if (!newTool.name.trim() || !newTool.url.trim()) return;
-    const entry = {
-      id: Date.now(),
-      name: newTool.name,
-      url: newTool.url.replace(/^https?:\/\//, ''),
-      priority: 'Sangat Bagus',
-      priorityKey: 'good',
-      pricingType: 'freemium',
-      category: newTool.category,
-      keywords: [newTool.category.toLowerCase(), 'ai tools', 'manual'],
-      savedAt: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }),
-      savedTimestamp: Date.now(),
-      description: '',
-      rating: 0,
-      note: newTool.note,
-    };
-    setBookmarks(prev => [entry, ...prev]);
-    setNewTool({ name: '', url: '', note: '', category: 'Research' });
-    setShowAddModal(false);
+  const handleAddTool = async () => {
+    if (!selectedToolToSave || isSavingTool) return;
+    setIsSavingTool(true);
+    try {
+      await bookmarkService.saveBookmark(selectedToolToSave.id, saveToolNote);
+      showToast(t('library.saveSuccess'), 'success');
+      fetchBookmarks();
+      fetchTags();
+      if (refreshSavedTools) {
+        refreshSavedTools().catch(() => {});
+      }
+      setShowAddModal(false);
+      setSearchToolQuery('');
+      setSelectedToolToSave(null);
+      setSaveToolNote('');
+    } catch (error) {
+      const message = error.response?.data?.message ?? t('library.saveFail');
+      showToast(message, 'error');
+    } finally {
+      setIsSavingTool(false);
+    }
   };
 
   const inputStyle = {
@@ -453,32 +528,32 @@ export default function LibraryView() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <AppIcon name="library" size={22} /> Library Tools Saya
+            <AppIcon name="library" size={22} /> {t('library.title')}
           </h1>
           <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-secondary)' }}>
-            Koleksi alat AI yang sudah kamu simpan, dilengkapi label prioritas otomatis.
+            {t('library.subtitle')}
           </p>
         </div>
         <button className="btn-primary" onClick={() => setShowAddModal(true)} style={{ whiteSpace: 'nowrap' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <AppIcon name="plus" size={14} color="#fff" /> Tambah Manual
+            <AppIcon name="plus" size={14} color="#fff" /> {t('library.addTool')}
           </span>
         </button>
       </div>
 
       {isLibraryEmpty ? (
         <div style={{ minHeight: 420, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 12px' }}>
-          <div style={{ width: 84, height: 84, borderRadius: 20, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+          <div style={{ width: 84, height: 84, borderRadius: 20, background: 'var(--color-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
             <AppIcon name="folder" size={44} color="#94A3B8" />
           </div>
           <h3 style={{ margin: '0 0 10px', fontSize: 24, fontWeight: 800, color: 'var(--color-text-primary)' }}>
-            Library-mu masih kosong
+            {t('library.emptyTitle')}
           </h3>
           <p style={{ margin: '0 0 22px', maxWidth: 520, fontSize: 14, lineHeight: 1.7, color: 'var(--color-text-secondary)' }}>
-            Mulai simpan tools dari Dashboard atau Chat &amp; Task untuk membangun koleksimu!
+            {t('library.emptyDesc')}
           </p>
           <button className="btn-primary" onClick={() => setActiveView('dashboard')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 16px' }}>
-            Ke Dashboard <AppIcon name="arrow-right" size={14} color="#fff" />
+            {t('library.goToDashboard')} <AppIcon name="arrow-right" size={14} color="#fff" />
           </button>
         </div>
       ) : (
@@ -486,9 +561,9 @@ export default function LibraryView() {
           {/* Stats row */}
           <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
             {[
-              { label: 'Total Tools', val: filtered.length, icon: 'folder' },
-              { label: 'Wajib Dicoba', val: filtered.filter(t => t.priorityKey === 'must_try').length, icon: 'flame' },
-              { label: 'Sangat Bagus', val: filtered.filter(t => t.priorityKey === 'very_good').length, icon: 'check' },
+              { label: t('library.totalTools'), val: filtered.length, icon: 'folder' },
+              { label: t('library.mustTry'), val: filtered.filter(t2 => t2.priorityKey === 'must_try').length, icon: 'flame' },
+              { label: t('library.veryGood'), val: filtered.filter(t2 => t2.priorityKey === 'very_good').length, icon: 'check' },
             ].map(stat => (
               <div key={stat.label} className="card" style={{ flex: 1, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ display: 'flex' }}><AppIcon name={stat.icon} size={22} /></span>
@@ -508,24 +583,24 @@ export default function LibraryView() {
               <input
                 value={searchVal}
                 onChange={e => setSearchVal(e.target.value)}
-                placeholder="Cari nama tool, tag, atau kategori..."
+                placeholder={t('library.searchPlaceholder')}
                 style={{ ...inputStyle, marginBottom: 20 }}
                 onFocus={e => e.target.style.borderColor = 'var(--color-primary)'}
                 onBlur={e => e.target.style.borderColor = 'var(--color-border)'}
               />
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', letterSpacing: '0.07em', margin: 0 }}>PRIORITAS</p>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', letterSpacing: '0.07em', margin: 0 }}>{t('library.priority')}</p>
                 <span
                   className="tooltip-host tooltip-help-icon"
-                  data-tooltip="Prioritas ditentukan otomatis berdasarkan frekuensi penggunaan dan rating tool."
+                  data-tooltip={t('library.priorityTooltip')}
                   aria-label="Info prioritas"
                   tabIndex={0}
                 >
                   ?
                 </span>
               </div>
-              {PRIORITY_OPTIONS.map(option => (
+              {PRIORITY_KEYS.map(option => (
                 <button
                   key={option.value}
                   type="button"
@@ -541,11 +616,11 @@ export default function LibraryView() {
                     textAlign: 'left',
                   }}
                 >
-                  {option.label}
+                  {option.key ? t(option.key) : option.label}
                 </button>
               ))}
 
-              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', letterSpacing: '0.07em', margin: '20px 0 8px' }}>KATEGORI</p>
+              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', letterSpacing: '0.07em', margin: '20px 0 8px' }}>{t('library.category')}</p>
               {CATEGORY_FILTERS.map(f => (
                 <button
                   key={f}
@@ -562,25 +637,25 @@ export default function LibraryView() {
                     textAlign: 'left',
                   }}
                 >
-                  {f}
+                  {f === 'all' ? t('library.categoryAll') : f}
                 </button>
               ))}
 
-              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', letterSpacing: '0.07em', margin: '20px 0 8px' }}>TAG</p>
-              {tags.length === 0 ? (
+              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', letterSpacing: '0.07em', margin: '20px 0 8px' }}>{t('library.tags')}</p>
+              {displayedTags.length === 0 ? (
                 <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: 0 }}>
-                  Belum ada tag.
+                  {t('library.noTags')}
                 </p>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {tags.map((tag) => (
+                  {displayedTags.map((tag) => (
                     <button
                       key={tag}
                       type="button"
                       onClick={() => handleTagClick(tag)}
                       style={{
                         border: '1px solid var(--color-border)',
-                        background: selectedTag === tag ? 'var(--color-primary-light)' : '#fff',
+                        background: selectedTag === tag ? 'var(--color-primary-light)' : 'var(--color-surface)',
                         color: selectedTag === tag ? 'var(--color-primary)' : 'var(--color-text-secondary)',
                         borderRadius: 999,
                         padding: '4px 10px',
@@ -599,11 +674,11 @@ export default function LibraryView() {
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
                 <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: 0 }}>
-                  Menampilkan <strong>{filtered.length}</strong> dari {totalCount} tools
+                  {t('library.showingXofY').replace('{x}', filtered.length).replace('{y}', totalCount)}
                 </p>
 
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                  <span style={{ fontWeight: 600 }}>Urutkan:</span>
+                  <span style={{ fontWeight: 600 }}>{t('library.sort')}</span>
                   <select
                     value={sortBy}
                     onChange={(event) => setSortBy(event.target.value)}
@@ -613,12 +688,12 @@ export default function LibraryView() {
                       fontSize: 13,
                       padding: '7px 10px',
                       color: 'var(--color-text-primary)',
-                      background: '#fff',
+                      background: 'var(--color-surface)',
                       outline: 'none',
                     }}
                   >
-                    {SORT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
+                    {SORT_KEYS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.key ? t(option.key) : option.label}</option>
                     ))}
                   </select>
                 </label>
@@ -630,28 +705,28 @@ export default function LibraryView() {
                     {errorMessage}
                   </p>
                   <button className="btn-secondary" onClick={fetchBookmarks}>
-                    Coba Lagi
+                    {t('library.retry')}
                   </button>
                 </div>
               ) : isLoading ? (
                 <div style={{ textAlign: 'center', padding: '56px 20px' }}>
                   <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: 14 }}>
-                    Memuat Library...
+                    {t('library.loading')}
                   </p>
                 </div>
               ) : filtered.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '56px 20px' }}>
                   <span style={{ display: 'inline-flex', position: 'relative' }}>
                     <AppIcon name="search" size={48} color="#94A3B8" />
-                    <span style={{ position: 'absolute', right: -2, bottom: -1, width: 18, height: 18, borderRadius: '50%', background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <AppIcon name="x" size={12} color="#64748B" />
+                    <span style={{ position: 'absolute', right: -2, bottom: -1, width: 18, height: 18, borderRadius: '50%', background: 'var(--color-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <AppIcon name="x" size={12} color="var(--color-text-secondary)" />
                     </span>
                   </span>
                   <p style={{ margin: '14px 0 14px', color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1.7 }}>
-                    Tidak ada tools yang cocok dengan filter ini. Coba ubah filter atau tambah tools baru.
+                    {t('library.noMatch')}
                   </p>
                   <button className="btn-secondary" onClick={handleResetFilters}>
-                    Reset Filter
+                    {t('library.resetFilter')}
                   </button>
                 </div>
               ) : (
@@ -668,26 +743,97 @@ export default function LibraryView() {
 
       {/* Add Tool Modal */}
       {showAddModal && (
-        <Modal title="Tambah Tool Baru" onClose={() => setShowAddModal(false)}>
-          <div>
-            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Nama Tool *</label>
-            <input value={newTool.name} onChange={e => setNewTool(p => ({ ...p, name: e.target.value }))} placeholder="Contoh: Perplexity AI" style={inputStyle} />
-            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>URL Tool *</label>
-            <input value={newTool.url} onChange={e => setNewTool(p => ({ ...p, url: e.target.value }))} placeholder="https://perplexity.ai" style={inputStyle} />
-            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Kategori</label>
-            <select value={newTool.category} onChange={e => setNewTool(p => ({ ...p, category: e.target.value }))} style={{ ...inputStyle }}>
-              {CATEGORY_FILTERS.filter(f => f !== 'Semua').map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Catatan (opsional)</label>
-            <textarea value={newTool.note} onChange={e => setNewTool(p => ({ ...p, note: e.target.value }))} placeholder="Untuk apa tool ini?" rows={3} style={{ ...inputStyle, resize: 'none' }} />
-            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '0 0 16px' }}>
-              Leva akan otomatis menganalisis dan memberikan label prioritas serta keywords.
-            </p>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn-ghost" onClick={() => setShowAddModal(false)} style={{ flex: 1 }}>Batal</button>
-              <button className="btn-primary" onClick={handleAddTool} style={{ flex: 2 }}>
+        <Modal title={t('library.searchToolTitle')} onClose={() => {
+          setShowAddModal(false);
+          setSearchToolQuery('');
+          setSelectedToolToSave(null);
+          setSaveToolNote('');
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 13, fontWeight: 600 }}>{t('library.searchToolLabel')}</label>
+              <input
+                value={searchToolQuery}
+                onChange={(e) => setSearchToolQuery(e.target.value)}
+                placeholder={t('library.searchToolPlaceholder')}
+                style={inputStyle}
+                autoFocus
+              />
+            </div>
+
+            {selectedToolToSave ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--color-primary-light)', borderRadius: 10 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--color-primary)', fontWeight: 600 }}>{t('library.selectedTool')}</p>
+                  <p style={{ margin: '2px 0 0', fontSize: 16, fontWeight: 700, color: 'var(--color-text-primary)' }}>{selectedToolToSave.name}</p>
+                </div>
+                <button type="button" onClick={() => setSelectedToolToSave(null)} style={{ background: 'transparent', border: 'none', color: 'var(--color-primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>{t('library.change')}</button>
+              </div>
+            ) : (
+              <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 10 }}>
+                {isSearchingTool ? (
+                  <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--color-text-secondary)', padding: 20 }}>{t('library.searching')}</p>
+                ) : searchToolResults.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '30px 10px', background: 'var(--color-bg)' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{t('library.toolNotFound')}</p>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                      {t('library.toolNotFoundDesc')}
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    {searchToolResults.map((tool, index) => (
+                      <button
+                        key={tool.id}
+                        type="button"
+                        onClick={() => setSelectedToolToSave(tool)}
+                        style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: '12px 14px', background: 'var(--color-surface)', borderBottom: index === searchToolResults.length - 1 ? 'none' : '1px solid var(--color-border)',
+                          borderTop: 'none', borderLeft: 'none', borderRight: 'none',
+                          cursor: 'pointer', textAlign: 'left', transition: 'background 0.2s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--color-bg)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'var(--color-surface)'}
+                      >
+                        <div>
+                          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--color-text-primary)' }}>{tool.name}</p>
+                          <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--color-text-secondary)' }}>{tool.category}</p>
+                        </div>
+                        <AppIcon name="arrow-right" size={16} color="var(--color-text-secondary)" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 13, fontWeight: 600 }}>{t('library.noteLabel')}</label>
+              <textarea
+                value={saveToolNote}
+                onChange={(e) => setSaveToolNote(e.target.value)}
+                placeholder={t('library.notePlaceholder')}
+                rows={3}
+                style={{ ...inputStyle, resize: 'none' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              <button className="btn-ghost" onClick={() => {
+                setShowAddModal(false);
+                setSearchToolQuery('');
+                setSelectedToolToSave(null);
+                setSaveToolNote('');
+              }} style={{ flex: 1 }}>{t('library.cancel')}</button>
+              <button 
+                className="btn-primary" 
+                onClick={handleAddTool} 
+                disabled={!selectedToolToSave || isSavingTool} 
+                style={{ flex: 2, opacity: !selectedToolToSave ? 0.5 : 1 }}
+              >
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <AppIcon name="plus" size={14} color="#fff" /> Tambah & Generate Label
+                  {isSavingTool ? t('dashboard.saving') : <><AppIcon name="check" size={14} color="#fff" /> {t('library.saveToLibrary')}</>}
                 </span>
               </button>
             </div>
@@ -696,13 +842,13 @@ export default function LibraryView() {
       )}
 
       {toolToDelete && (
-        <Modal title="Hapus Tool?" onClose={() => setToolToDelete(null)}>
+        <Modal title={t('library.deleteTitle')} onClose={() => setToolToDelete(null)}>
           <p style={{ margin: '0 0 16px', fontSize: 14, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
-            Apakah kamu yakin ingin menghapus {toolToDelete.name} dari library?
+            {t('library.deleteConfirm')} {toolToDelete.name} {t('library.deleteFrom')}
           </p>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn-ghost" onClick={() => setToolToDelete(null)} style={{ flex: 1 }}>
-              Batal
+              {t('library.cancel')}
             </button>
             <button
               onClick={handleConfirmDelete}
@@ -718,7 +864,7 @@ export default function LibraryView() {
                 padding: '10px 16px',
               }}
             >
-              Hapus
+              {t('library.confirmDelete')}
             </button>
           </div>
         </Modal>

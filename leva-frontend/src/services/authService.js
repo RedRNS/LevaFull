@@ -19,13 +19,16 @@ export const authService = {
       password,
       password_confirmation: password,
     });
-    return data.data;
+    return data.data || data;
   },
 
   async login(email, password) {
     const { data } = await api.post('/auth/login', { email, password });
-    localStorage.setItem('leva_token', data.data.token);
-    return data.data.user;
+    const token = data.data?.token || data.token;
+    if (token) {
+        localStorage.setItem('leva_token', token);
+    }
+    return data.data?.user || data.user;
   },
 
   async logout() {
@@ -35,6 +38,7 @@ export const authService = {
 
   async me() {
     const { data } = await api.get('/auth/me');
-    return this.mapUserProfile(data.data.user);
+    const user = data.data?.user || data.user || data;
+    return this.mapUserProfile(user);
   },
 };

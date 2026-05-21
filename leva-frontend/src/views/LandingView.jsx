@@ -557,15 +557,10 @@ function Footer() {
 }
 
 export default function LandingView() {
-  const { setActiveView } = useApp();
+  const { enterApp } = useApp();
 
-  const goToRegister = () => setActiveView('onboarding');
-  const goToLogin = () => {
-    setActiveView('onboarding');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('leva:open-login'));
-    }, 50);
-  };
+  const goToRegister = () => enterApp('register');
+  const goToLogin = () => enterApp('login');
 
   return (
     <div style={{ fontFamily: "'Inter', sans-serif", overflowX: 'hidden' }}>

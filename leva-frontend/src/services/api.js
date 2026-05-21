@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api',
   headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 });
 
@@ -18,7 +18,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('leva_token');
-      window.location.href = '/';
+      // Karena kita pakai activeView, jangan pakai window.location.href
     }
     return Promise.reject(err);
   }
